@@ -1,0 +1,41 @@
+{
+    "name": "eugktech/flysystem-boxcom",
+    "description": "Flysystem Adapter for the Box.com v2 API",
+    "homepage": "https://gitlab.com/eugktech/flysystem-boxcom",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "flysystem-boxcom",
+        "flysystem",
+        "box.com",
+        "v2",
+        "api"
+    ],
+    "authors": [
+        {
+            "name": "Eugktech",
+            "email": "work@eugk.name",
+            "role": "Developer"
+        }
+    ],
+    "require": {
+        "php": "^8.0",
+        "league/flysystem": "^2.0",
+        "eugktech/boxcom-api": "dev-main"
+    },
+    "prefer-stable" : true,
+    "require-dev": {
+        "symfony/var-dumper": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "Eugktech\\FlysystemBox\\": "src"
+        }
+    },
+    "repositories": {
+        "eugktech/boxcom-api": {
+            "type": "vcs",
+            "url": "https://gitlab.com/eugktech/boxcom-api"
+        }
+    }
+}
