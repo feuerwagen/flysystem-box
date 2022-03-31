@@ -23,7 +23,7 @@
         "league/flysystem": "^2.0",
         "eugktech/boxcom-api": "dev-main"
     },
-    "prefer-stable" : true,
+    "minimum-stability" : "dev",
     "require-dev": {
         "symfony/var-dumper": "*"
     },
