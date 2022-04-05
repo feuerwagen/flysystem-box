@@ -66,7 +66,7 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
     {
         $location = $this->applyPathPrefix($path);
 
-        if ($id = $this->getIdByPath($location)) {
+        if (false !== ($id = $this->getIdByPath($location))) {
             return $this->client->listItemsInFolder($id);
         }
 
@@ -80,7 +80,7 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
     {
         $location = $this->applyPathPrefix($path);
 
-        if ($id = $this->getIdByPath($location)) {
+        if (false !== ($id = $this->getIdByPath($location))) {
             try {
                 $this->client->delete($id);
             } catch (\Exception $e) {
@@ -96,7 +96,7 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
     {
         $location = $this->applyPathPrefix($path);
 
-        if ($id = $this->getIdByPath($location)) {
+        if (false !== ($id = $this->getIdByPath($location))) {
             try {
                 $this->client->deleteFolder($id);
             } catch (\Exception $e) {
@@ -335,7 +335,7 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
     {
         $location = $this->applyPathPrefix($path);
 
-        if($id = $this->getIdByPath($location)) {
+        if (false !== ($id = $this->getIdByPath($location))) {
             try {
                 $stream = $this->client->download($id);
             } catch (\Exception $e) {
@@ -368,10 +368,10 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
         $this->map = array_merge($this->map, $this->makeFoldersMap());
     }
 
-    protected function getTypeAndIdByPath(string $path = ''): ?array
+    protected function getTypeAndIdByPath(string $path = '/'): bool|array
     {
         if (empty($path)) {
-            return null;
+            $path = '/';
         }
 
         if (array_key_exists($path, $this->map)) {
@@ -381,7 +381,7 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
         $splitPath = explode($this->pathSeparator, $path);
 
         if (empty($splitPath)) {
-            return null;
+            return false;
         }
 
         $fileName = array_pop($splitPath);
@@ -401,13 +401,13 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
             }
         }
 
-        return null;
+        return false;
     }
 
-    protected function getIdByPath(string $path = ''): ?int
+    protected function getIdByPath(string $path = ''): bool|int
     {
         $result = $this->getTypeAndIdByPath($path);
 
-        return ($result) ? (int)$result['id'] : null;
+        return ($result) ? (int)$result['id'] : false;
     }
 }
