@@ -24,6 +24,7 @@
         "eugktech/boxcom-api": "dev-main"
     },
     "minimum-stability" : "dev",
+    "prefer-stable" : true,
     "require-dev": {
         "symfony/var-dumper": "*"
     },
