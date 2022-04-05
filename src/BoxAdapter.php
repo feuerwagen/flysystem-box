@@ -288,6 +288,9 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
         $parentFolderId = $this->getIdByPath($folderPath);
 
         try {
+            if (! $parentFolderId) {
+                $this->createDirectory($folderPath, new Config());
+            }
             $this->client->upload($fileName, $parentFolderId, $contents);
         } catch (\Exception $e) {
             throw UnableToWriteFile::atLocation($location, $e->getMessage(), $e);
