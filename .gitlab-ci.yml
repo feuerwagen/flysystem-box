@@ -1,0 +1,9 @@
+satis:
+  tags:
+    - aha-web2
+  only:
+    - main
+    - tags
+  script:
+    - cd /var/www/aha/packages
+    - php bin/satis build satis.json web

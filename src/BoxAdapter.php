@@ -1,7 +1,9 @@
 <?php
 
-namespace Eugktech\FlysystemBox;
+namespace Adnet\Flysystem\Box;
 
+use Adnet\Flysystem\Box\Exceptions\DirectoryDoesNotExist;
+use Adnet\Flysystem\Box\Exceptions\FileDoesNotExist;
 use League\Flysystem;
 use League\Flysystem\Config;
 use League\Flysystem\FileAttributes;
@@ -19,30 +21,31 @@ use Eugktech\Box\Client;
 
 class BoxAdapter implements Flysystem\FilesystemAdapter
 {
+    private const FOLDER = 'folder';
+    private const FILE = 'file';
+
     protected Client $client;
 
     protected PathPrefixer $prefixer;
 
     protected MimeTypeDetector $mimeTypeDetector;
 
-    protected ?string $pathPrefix = '';
-
     protected string $pathSeparator = '/';
 
     /**
      * hash mapping paths to their ids and types
      */
-    protected array $map = ['/' => ['id' => '0', 'type' => 'folder']];
+    protected ?array $map = null;
 
     public function __construct(
         Client $client,
         string $prefix = '',
+        private readonly int $rootFolderId = 0,
         MimeTypeDetector $mimeTypeDetector = null
     ) {
         $this->client = $client;
         $this->prefixer = new PathPrefixer($prefix);
         $this->mimeTypeDetector = $mimeTypeDetector ?: new FinfoMimeTypeDetector();
-        $this->setFoldersMap();
     }
 
     /**
@@ -50,13 +53,15 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
      */
     public function fileExists(string $path): bool
     {
-        $location = $this->applyPathPrefix($path);
+        $location = $this->prefixer->prefixPath($path);
 
         try {
-            return (! empty($this->getMetadata($location)));
-        } catch (\Exception $e) {
+            $this->getMetadata($location);
+        } catch (\Exception) {
             return false;
         }
+
+        return true;
     }
 
     /**
@@ -64,13 +69,10 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
      */
     public function listContents(string $path = '', bool $deep = false): iterable
     {
-        $location = $this->applyPathPrefix($path);
+        $location = $this->prefixer->prefixPath($path);
+        $id = $this->getFolderId($location);
 
-        if (false !== ($id = $this->getIdByPath($location))) {
-            return $this->client->listItemsInFolder($id);
-        }
-
-        return [];
+        return $this->client->listItemsInFolder($id);
     }
 
     /**
@@ -78,14 +80,13 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
      */
     public function delete(string $path): void
     {
-        $location = $this->applyPathPrefix($path);
+        $location = $this->prefixer->prefixPath($path);
 
-        if (false !== ($id = $this->getIdByPath($location))) {
-            try {
-                $this->client->delete($id);
-            } catch (\Exception $e) {
-                throw UnableToDeleteFile::atLocation($location, $e->getMessage(), $e);
-            }
+        try {
+            $id = $this->getFileId($location);
+            $this->client->delete($id);
+        } catch (\Exception $e) {
+            throw UnableToDeleteFile::atLocation($location, $e->getMessage(), $e);
         }
     }
 
@@ -94,14 +95,13 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
      */
     public function deleteDirectory(string $path): void
     {
-        $location = $this->applyPathPrefix($path);
+        $location = $this->prefixer->prefixPath($path);
 
-        if (false !== ($id = $this->getIdByPath($location))) {
-            try {
-                $this->client->deleteFolder($id);
-            } catch (\Exception $e) {
-                throw UnableToDeleteDirectory::atLocation($location, $e->getMessage(), $e);
-            }
+        try {
+            $id = $this->getFolderId($location);
+            $this->client->deleteFolder($id);
+        } catch (\Exception $e) {
+            throw UnableToDeleteDirectory::atLocation($location, $e->getMessage(), $e);
         }
     }
 
@@ -110,7 +110,7 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
      */
     public function createDirectory(string $path, Config $config): void
     {
-        $location = $this->applyPathPrefix($path);
+        $location = $this->prefixer->prefixPath($path);
 
         $rPath = '';
         foreach (explode($this->pathSeparator, $location) as $part) {
@@ -120,14 +120,14 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
 
             $rPath = ($rPath) ? "{$rPath}{$this->pathSeparator}{$part}" : $part;
 
-            if (array_key_exists($rPath, $this->map)) {
+            if (array_key_exists($rPath, $this->getFoldersMap())) {
                 continue;
             }
 
             $splitPath = explode($this->pathSeparator, $rPath);
             $folderName = array_pop($splitPath);
             $folderPath = implode($this->pathSeparator, $splitPath);
-            $parentFolderId = $this->getIdByPath($folderPath);
+            $parentFolderId = $this->getFolderId($folderPath);
 
             try {
                 $this->client->createFolder($folderName, $parentFolderId);
@@ -175,7 +175,7 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
      */
     public function lastModified(string $path): FileAttributes
     {
-        $location = $this->applyPathPrefix($path);
+        $location = $this->prefixer->prefixPath($path);
 
         try {
             $response = $this->getMetadata($location);
@@ -198,7 +198,7 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
      */
     public function fileSize(string $path): FileAttributes
     {
-        $location = $this->applyPathPrefix($path);
+        $location = $this->prefixer->prefixPath($path);
 
         try {
             $response = $this->getMetadata($location);
@@ -228,26 +228,16 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
         throw UnableToSetVisibility::atLocation($source, 'Adapter does not support copy command.');
     }
 
-    protected function getPathPrefix(): ?string
-    {
-        return $this->pathPrefix;
-    }
-
-    protected function applyPathPrefix(string $path): string
-    {
-        return $this->getPathPrefix() . ltrim($path, '\\/');
-    }
-
     /**
      * Get all the metadata of a file or directory.
      */
-    public function getMetadata(string $path): bool|array
+    private function getMetadata(string $path): array
     {
-        $location = $this->applyPathPrefix($path);
+        $location = $this->prefixer->prefixPath($path);
 
         if ($item = $this->getTypeAndIdByPath($location)) {
             switch ($item['type']) {
-                case 'file':
+                case self::FILE:
                     $response = $this->client->getFileInformation($item['id']);
 
                     return [
@@ -257,7 +247,7 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
                         'type' => $response['type'],
                         'timestamp' => strtotime($response['modified_at']),
                     ];
-                case 'folder':
+                case self::FOLDER:
                     $response = $this->client->getFolderInformation($item['id']);
 
                     return [
@@ -266,12 +256,10 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
                         'type' => $response['type'],
                         'timestamp' => strtotime($response['modified_at']),
                     ];
-                default:
-                    throw new UnableToRetrieveMetadata();
             }
         }
 
-        return false;
+        throw new UnableToRetrieveMetadata();
     }
 
     /**
@@ -279,22 +267,11 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
      */
     public function write(string $path, string $contents, Config $config): void
     {
-        $location = $this->applyPathPrefix($path);
+        $stream = fopen('php://memory', 'rb+');
+        fwrite($stream, $contents);
+        rewind($stream);
 
-        $splitPath = explode($this->pathSeparator, $location);
-
-        $fileName = array_pop($splitPath);
-        $folderPath = implode($this->pathSeparator, $splitPath);
-        $parentFolderId = $this->getIdByPath($folderPath);
-
-        try {
-            if (! $parentFolderId) {
-                $this->createDirectory($folderPath, new Config());
-            }
-            $this->client->upload($fileName, $parentFolderId, $contents);
-        } catch (\Exception $e) {
-            throw UnableToWriteFile::atLocation($location, $e->getMessage(), $e);
-        }
+        $this->writeStream($path, $stream, $config);
     }
 
     /**
@@ -302,18 +279,19 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
      */
     public function writeStream(string $path, $contents, Config $config): void
     {
-        $location = $this->applyPathPrefix($path);
-
+        $location = $this->prefixer->prefixPath($path);
         $splitPath = explode($this->pathSeparator, $location);
-
         $fileName = array_pop($splitPath);
         $folderPath = implode($this->pathSeparator, $splitPath);
-        $parentFolderId = $this->getIdByPath($folderPath);
 
         try {
-            if (! $parentFolderId) {
-                $this->createDirectory($folderPath, new Config());
-            }
+            $parentFolderId = $this->getFolderId($folderPath);
+        } catch (DirectoryDoesNotExist) {
+            $this->createDirectory($folderPath, new Config());
+            $parentFolderId = $this->getFolderId($folderPath);
+        }
+
+        try {
             $this->client->upload($fileName, $parentFolderId, $contents);
         } catch (\Exception $e) {
             throw UnableToWriteFile::atLocation($location, $e->getMessage(), $e);
@@ -325,11 +303,11 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
      */
     public function read(string $path): string
     {
-        $object = $this->readStream($path);
+        $resource = $this->readStream($path);
 
-        $contents = stream_get_contents($object);
-        fclose($object);
-        unset($object);
+        $contents = stream_get_contents($resource);
+        fclose($resource);
+        unset($resource);
 
         return $contents;
     }
@@ -339,55 +317,54 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
      */
     public function readStream(string $path)
     {
-        $location = $this->applyPathPrefix($path);
+        $location = $this->prefixer->prefixPath($path);
 
-        if (false !== ($id = $this->getIdByPath($location))) {
-            try {
-                $stream = $this->client->download($id);
-            } catch (\Exception $e) {
-                throw UnableToReadFile::fromLocation($location, $e->getMessage(), $e);
-            }
-            return $stream;
+        try {
+            return $this->client->download($this->getFileId($location));
+        } catch (\Exception $e) {
+            throw UnableToReadFile::fromLocation($location, $e->getMessage(), $e);
         }
     }
 
-    protected function makeFoldersMap(int $folderId = 0, string $path = '', array $map = []): array
+    private function makeFoldersMap(int $folderId = 0, string $path = '', array $map = []): void
     {
         $result = $this->client->listItemsInFolder($folderId);
 
         foreach ($result['entries'] as $entry) {
-            if ($entry['type'] === 'folder') {
+            if ($entry['type'] === self::FOLDER) {
                 $folderPath = ($path !== '') ? $path . $this->pathSeparator . $entry['name'] : $entry['name'];
-                $map[$folderPath] = ['id' => $entry['id'], 'name' => $entry['name'], 'path' => $folderPath];
-
-
-                $map = array_merge($map, $this->makeFoldersMap($entry['id'], $folderPath, $map));
+                $this->map[$folderPath] = ['id' => $entry['id'], 'name' => $entry['name'], 'path' => $folderPath];
+                $this->makeFoldersMap($entry['id'], $folderPath, $map);
             }
         }
-
-        return $map;
     }
 
-    public function setFoldersMap(): void
+    private function getFoldersMap(): array
     {
-        // TODO: Cache the results
-        $this->map = array_merge($this->map, $this->makeFoldersMap());
+        // TODO cache map
+        if ($this->map === null) {
+            $this->map = [$this->prefixer->prefixPath('') => ['id' => $this->rootFolderId, 'type' => self::FOLDER]];
+            $this->makeFoldersMap();
+        }
+
+        return $this->map;
     }
 
-    protected function getTypeAndIdByPath(string $path = '/'): bool|array
+    private function getFolderId(string $path): int
     {
-        if (empty($path)) {
-            $path = '/';
+        if (array_key_exists($path, $this->getFoldersMap())) {
+            return $this->getFoldersMap()[$path]['id'];
         }
 
-        if (array_key_exists($path, $this->map)) {
-            return ['type' => 'folder', 'id' => $this->map[$path]['id']];
-        }
+        throw DirectoryDoesNotExist::forLocation($path);
+    }
 
+    private function getFileId(string $path): int
+    {
         $splitPath = explode($this->pathSeparator, $path);
 
         if (empty($splitPath)) {
-            return false;
+            throw FileDoesNotExist::forLocation($path);
         }
 
         $fileName = array_pop($splitPath);
@@ -397,23 +374,44 @@ class BoxAdapter implements Flysystem\FilesystemAdapter
             $folderPath = $this->pathSeparator;
         }
 
-        if (array_key_exists($folderPath, $this->map)) {
-            $itemsInFolder = $this->client->listItemsInFolder($this->map[$folderPath]['id']);
+        $itemsInFolder = $this->client->listItemsInFolder($this->getFolderId($folderPath));
 
-            foreach ($itemsInFolder['entries'] as $entry) {
-                if ($entry['type'] === 'file' && $entry['name'] === $fileName) {
-                    return ['type' => 'file', 'id' => (int)$entry['id']];
-                }
+        foreach ($itemsInFolder['entries'] as $entry) {
+            if ($entry['type'] === self::FILE && $entry['name'] === $fileName) {
+                return (int) $entry['id'];
             }
         }
 
-        return false;
+        throw FileDoesNotExist::forLocation($path);
     }
 
-    protected function getIdByPath(string $path = ''): bool|int
+    private function getTypeAndIdByPath(string $path = '/'): bool|array
+    {
+        try {
+            return ['type' => self::FOLDER, 'id' => $this->getFolderId($path)];
+        } catch (DirectoryDoesNotExist) {
+            // This is fine, might be a file.
+        }
+
+        try {
+            return ['type' => self::FILE, 'id' => $this->getFileId($path)];
+        } catch (FileDoesNotExist) {
+            return false;
+        }
+    }
+
+    private function getIdByPath(string $path = ''): bool|int
     {
         $result = $this->getTypeAndIdByPath($path);
 
-        return ($result) ? (int)$result['id'] : false;
+        return ($result) ? $result['id'] : false;
+    }
+
+    /**
+     * @inheritDoc
+     */
+    public function directoryExists(string $path): bool
+    {
+        return in_array($path, $this->getFoldersMap());
     }
 }

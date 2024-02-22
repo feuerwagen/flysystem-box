@@ -1,5 +1,5 @@
 {
-    "name": "eugktech/flysystem-boxcom",
+    "name": "adnet/flysystem-box",
     "description": "Flysystem Adapter for the Box.com v2 API",
     "homepage": "https://gitlab.com/eugktech/flysystem-boxcom",
     "type": "library",
@@ -19,8 +19,8 @@
         }
     ],
     "require": {
-        "php": "^8.0",
-        "league/flysystem": "^2.0",
+        "php": "^8.1",
+        "league/flysystem": "^2.0|^3.0",
         "eugktech/boxcom-api": "dev-main"
     },
     "minimum-stability" : "dev",
@@ -30,7 +30,7 @@
     },
     "autoload": {
         "psr-4": {
-            "Eugktech\\FlysystemBox\\": "src"
+            "Adnet\\Flysystem\\Box\\": "src"
         }
     },
     "repositories": {
